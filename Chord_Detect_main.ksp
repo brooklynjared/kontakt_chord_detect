@@ -1,0 +1,445 @@
+{ Script for detecting the chord quality and root of a given chord played by the user.
+Assumes the chord will not contain more than four notes.}
+
+
+on init
+
+	{* PRAGMA - SAVE TO FILE ON COMPILE *}
+	{#pragma save_compiled_source Resources/scripts/Chord_Detective_main.txt}
+
+	make_perfview
+
+
+	declare i
+	declare j
+	declare k
+
+	{Basic UI for feedback in development}
+	declare ui_label lbl_chord_root(1,1)
+	lbl_chord_root -> TEXT := "Undefined"
+
+	declare ui_label lbl_chord_type(1,1)
+	lbl_chord_type -> TEXT := "Chord type"
+
+	set_key_color(48, KEY_COLOR_RED)
+	set_key_name(48, "Trigger the chord analysis")
+
+
+	declare pers chord_root
+	declare pers chord_type
+
+	declare !root_names[12]
+	root_names[0] := "C"
+	root_names[1] := "Db"
+	root_names[2] := "D"
+	root_names[3] := "Eb"
+	root_names[4] := "E"
+	root_names[5] := "F"
+	root_names[6] := "Gb"
+	root_names[7] := "G"
+	root_names[8] := "Ab"
+	root_names[9] := "A"
+	root_names[10] := "Bb"
+	root_names[11] := "B"
+
+	declare !chord_types[11]
+	chord_types[0] := "Major (root inv.)"
+	chord_types[1] := "Major (1st inv.)"
+	chord_types[2] := "Major (2nd inv.)"
+	chord_types[3] := "Major 7"
+	chord_types[4] := "Minor(root inv.)"
+	chord_types[5] := "Minor(1st inv.)"
+	chord_types[6] := "Minor(2nd inv.)"
+	chord_types[7] := "Minor 7"
+	chord_types[8] := "Dom 7"
+	chord_types[9] := "Dom 7(sus4)"
+	chord_types[10] := "Octaves"
+
+
+	{Slider to set the chord detection bufer length}
+	declare pers ui_slider $sli_detection_time (20,300)
+	$sli_detection_time -> DEFAULT := 100
+	$sli_detection_time -> POS_X := 400
+	$sli_detection_time -> POS_Y := 20
+	set_control_help($sli_detection_time,"Detection Time: Sets the time buffer of the chord detection.")
+	
+	{Buffer time (in milliseconds) to use while evaluating whether played notes belong to an existing chord or a newly played chord.}
+	declare buffer_length := $sli_detection_time
+
+
+	{Array to hold the notes of the chord, as played.}
+	declare %played_chord_notes[4] := (-1)
+	watch_array_idx(played_chord_notes, 0)
+	watch_array_idx(played_chord_notes, 1)
+	watch_array_idx(played_chord_notes, 2)
+	watch_array_idx(played_chord_notes, 3)
+
+	{Array to hold the sorted chord for analysis.}
+	declare %sorted_chord_notes[4] := (-1)
+	watch_array_idx(sorted_chord_notes, 0)
+	watch_array_idx(sorted_chord_notes, 1)
+	watch_array_idx(sorted_chord_notes, 2)
+	watch_array_idx(sorted_chord_notes, 3)
+
+	{Array to hold the calculated intervals between each chord tone present.}
+	declare %chord_intervals[3] := (-1)
+	watch_array_idx(%chord_intervals, 0)
+	watch_array_idx(%chord_intervals, 1)
+	watch_array_idx(%chord_intervals, 2)
+
+
+
+	{Chord detection playable key range}
+	declare const CHORD_DETECT_RANGE_LOW := 60
+	declare const CHORD_DETECT_RANGE_HIGH := 84
+
+	i := CHORD_DETECT_RANGE_LOW
+	while (i < CHORD_DETECT_RANGE_HIGH + 1)
+		set_key_color(i, KEY_COLOR_ORANGE)
+		set_key_name(i, "Play chords of up to four notes in this keyrange. Chords inversions will be detected, but chords must be played in closed voicings.")
+		inc(i)
+	end while
+
+	{Store the engine uptime of the last played note, for evaluating the time between played notes.}
+	declare last_played_note_time := 0
+	watch_var(last_played_note_time)
+
+
+
+	{ ### ARRAYS OF CHORD VOICINGS BY INTERVAL ### }
+	import 'Chord_voicings_lib.ksp'
+
+	{Variable for keeping of track of whether a particular voicing was found in the library.}
+	declare chord_found := -1
+
+	message("Chord Detective v0.9")
+
+
+end on
+
+
+
+{ ###################### }
+{ ##### FUNCTIONS ###### }
+{ ###################### }
+
+
+
+{Initialize the played_chord_notes array to store a new chord.}
+function func_reset_chord
+
+	chord_found := -1
+
+	j := 0
+	while(j < 3 + 1)
+		played_chord_notes[j] := -1
+		sorted_chord_notes[j] := -1
+		if(j < 3) {The intervals array has one fewer elements.}
+			chord_intervals[j] := -1 
+		end if
+		inc(j)
+	end while
+
+end function
+
+
+function func_analyze_chord
+
+	sort(played_chord_notes, 0) {If the chord has less than 4 notes, this will result in the some values of -1 in the first (or later) index positions.}
+
+	{In case the sorted chord tones result in a value of -1 at the start of the array, shift the sorted chord notes to the left and insert -1 at the end as needed.}
+	i := 0 {iterator}
+	j := 0 {index in the sorted array to put a valid note}
+	while (i < 4)
+		if(played_chord_notes[i] # -1)
+			sorted_chord_notes[j] := played_chord_notes[i]
+			inc(j)
+		end if
+		inc(i)
+	end while
+
+	{Get the intervals between each played note, from bottom to top, and store the intervals in an array.}
+	if (sorted_chord_notes[1] # -1)
+		chord_intervals[0] := sorted_chord_notes[1] - sorted_chord_notes[0]
+	end if
+
+	if (sorted_chord_notes[2] # -1)
+		chord_intervals[1] := sorted_chord_notes[2] - sorted_chord_notes[1]
+	end if
+
+	if (sorted_chord_notes[3] # -1)
+		chord_intervals[2] := sorted_chord_notes[3] - sorted_chord_notes[2]
+	end if
+
+
+	{ #### Check the intervals against the lirbary of chord voicings #### }
+
+	{ -- Major Triads --}
+	if (array_equal(chord_intervals, %major_1st_Inv))
+        chord_root := sorted_chord_notes[0] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 0
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %major_2nd_Inv))
+        chord_root := sorted_chord_notes[2] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 1
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %major_3rd_Inv))
+        chord_root := sorted_chord_notes[1] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 2
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	{ -- Major 7 Chords --}
+	if (array_equal(chord_intervals, %major7_1st_Inv))
+        chord_root := sorted_chord_notes[0] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 3
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %major7_2nd_Inv))
+        chord_root := sorted_chord_notes[3] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 3
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %major7_3rd_Inv))
+        chord_root := sorted_chord_notes[2] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 3
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %major7_4th_Inv))
+        chord_root := sorted_chord_notes[1] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 3
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+
+    { -- Minor Triads --}
+	if (array_equal(chord_intervals, %minor_1st_Inv))
+        chord_root := sorted_chord_notes[0] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 4
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %minor_2nd_Inv))
+        chord_root := sorted_chord_notes[2] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 5
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %minor_3rd_Inv))
+        chord_root := sorted_chord_notes[1] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 6
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+ 
+    
+	{ -- Minor 7 Chords --}
+	if (array_equal(chord_intervals, %minor7_1st_Inv))
+        chord_root := sorted_chord_notes[0] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 7
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %minor7_2nd_Inv))
+        chord_root := sorted_chord_notes[3] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 7
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %minor7_3rd_Inv))
+        chord_root := sorted_chord_notes[2] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 7
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %minor7_4th_Inv))
+        chord_root := sorted_chord_notes[1] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 7
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	{ -- Dom 7 Chords --}
+	if (array_equal(chord_intervals, %dom7_1st_Inv))
+        chord_root := sorted_chord_notes[0] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 8
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %dom7_2nd_Inv))
+        chord_root := sorted_chord_notes[3] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 8
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %dom7_3rd_Inv))
+        chord_root := sorted_chord_notes[2] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 8
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %dom7_4th_Inv))
+        chord_root := sorted_chord_notes[1] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 8
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	{ -- Dom 7 sus4 Chords --}
+	if (array_equal(chord_intervals, %dom7sus4_1st_Inv))
+        chord_root := sorted_chord_notes[0] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 9
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %dom7sus4_2nd_Inv))
+        chord_root := sorted_chord_notes[3] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 9
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %dom7sus4_3rd_Inv))
+        chord_root := sorted_chord_notes[2] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 9
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %dom7sus4_4th_Inv))
+        chord_root := sorted_chord_notes[1] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 9
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	{ -- Octaves --}
+	if (array_equal(chord_intervals, %octave_single))
+        chord_root := sorted_chord_notes[0] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 10
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+	if (array_equal(chord_intervals, %octave_double))
+        chord_root := sorted_chord_notes[0] mod 12 {assign the root note based on the current chord inversion}
+        lbl_chord_root -> TEXT := root_names[chord_root]
+        chord_type := 10
+        lbl_chord_type -> TEXT := chord_types[chord_type]
+        chord_found := 1
+    end if
+
+
+    {IF CHORD NOT FOUND IN LIBRARY OF VOICINGS}
+    if (chord_found < 1)
+    	lbl_chord_type -> TEXT := "Unkown"
+    end if
+
+
+
+	message("Chord: " & sorted_chord_notes[0] & ", " & sorted_chord_notes[1] & ", " & sorted_chord_notes[2] & ", " & sorted_chord_notes[3] & "  || Intervals: " & chord_intervals[0] & ", " & chord_intervals[1] & ", " & chord_intervals[2])
+
+
+end function
+
+
+
+
+{ ###################### }
+{ ###### ON NOTE ####### }
+{ ###################### }
+
+on note
+
+	if (in_range(EVENT_NOTE, CHORD_DETECT_RANGE_LOW, CHORD_DETECT_RANGE_HIGH))
+		
+		if(ENGINE_UPTIME - last_played_note_time > buffer_length) {This is the first note of a new chord.}
+
+			call func_reset_chord {Reset the array of stored notes in the chord.}
+
+			played_chord_notes[0] := EVENT_NOTE {set the first chord note to this note}
+			last_played_note_time := $ENGINE_UPTIME	{set the time this note was played}
+
+			wait(buffer_length*1000)
+			call func_analyze_chord
+
+		else {This is an additional note in the chord.}
+
+			i := 1
+			while(i < 4)
+				if(played_chord_notes[i] = -1)
+					played_chord_notes[i] := EVENT_NOTE
+					exit
+				end if
+				inc(i)
+			end while
+			last_played_note_time := $ENGINE_UPTIME	{set the time this note was played}
+
+		end if
+
+
+	end if
+
+	{Development only, trigger the chord analysis.}
+	if(EVENT_NOTE = 48)
+		call func_analyze_chord
+	end if
+
+end on
+
+
+
+{ ###################### }
+{ #### UI CONTROL ###### }
+{ ###################### }
+
+on ui_control($sli_detection_time)
+	buffer_length := $sli_detection_time
+	message("Chord detection buffer length: " & buffer_length & "ms")
+end on

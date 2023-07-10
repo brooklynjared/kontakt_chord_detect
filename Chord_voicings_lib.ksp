@@ -1,0 +1,39 @@
+
+
+{Major Triad}
+declare %major_1st_Inv[3] := (4,3,-1)
+declare %major_2nd_Inv[3] := (3,5,-1)
+declare %major_3rd_Inv[3] := (5,4,-1)
+
+{Minor Triad}
+declare %minor_1st_Inv[3] := (3,4,-1)
+declare %minor_2nd_Inv[3] := (4,5,-1)
+declare %minor_3rd_Inv[3] := (5,3,-1)
+
+{Major 7}
+declare %major7_1st_Inv[3] := (4,3,4)
+declare %major7_2nd_Inv[3] := (3,4,1)
+declare %major7_3rd_Inv[3] := (4,1,4)
+declare %major7_4th_Inv[3] := (1,4,3)
+
+{Minor 7}
+declare %minor7_1st_Inv[3] := (3,4,3)
+declare %minor7_2nd_Inv[3] := (4,3,2)
+declare %minor7_3rd_Inv[3] := (3,2,3)
+declare %minor7_4th_Inv[3] := (2,3,4)
+
+{Dominant 7}
+declare %dom7_1st_Inv[3] := (4,3,3)
+declare %dom7_2nd_Inv[3] := (3,3,2)
+declare %dom7_3rd_Inv[3] := (3,2,4)
+declare %dom7_4th_Inv[3] := (2,4,3)
+
+{Dominant 7 sus4}
+declare %dom7sus4_1st_Inv[3] := (5,2,3)
+declare %dom7sus4_2nd_Inv[3] := (2,3,2)
+declare %dom7sus4_3rd_Inv[3] := (3,2,5)
+declare %dom7sus4_4th_Inv[3] := (2,5,2)
+
+{Octaves}
+declare %octave_single[3] := (-1,-1,-1)
+declare %octave_double[3] := (12,-1,-1)
